@@ -1,14 +1,11 @@
 package handlers
 
 import (
-	_ "embed"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/boronlabs/m-tap-backend/api"
 )
-
-//go:embed ../../api/openapi.yaml
-var OpenAPISpec []byte
 
 type SwaggerHandler struct{}
 
@@ -18,7 +15,7 @@ func NewSwaggerHandler() *SwaggerHandler {
 
 // ServeSpec serves the raw OpenAPI 3.0 YAML specification.
 func (h *SwaggerHandler) ServeSpec(c *gin.Context) {
-	c.Data(http.StatusOK, "application/yaml; charset=utf-8", OpenAPISpec)
+	c.Data(http.StatusOK, "application/yaml; charset=utf-8", api.OpenAPISpec)
 }
 
 // ServeUI renders the interactive Swagger UI dashboard.
