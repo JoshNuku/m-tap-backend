@@ -1,0 +1,290 @@
+openapi: 3.0.3
+info:
+  title: M-Tap Proximity Switching Backend API
+  description: |
+    Ultra-low-latency proximity micro-retail payment switching engine for Boron Labs.
+    Bridges physical 7-byte NFC tags (`tag_uid`), edge POS terminals, Mobile Money rails (via Paystack),
+    and SMS onboarding networks (via Africa's Talking) with double-entry accounting guarantees.
+    
+    ### Financial Units Notice
+    All monetary calculations and balance values are strictly represented in minor currency units (**Pesewas**; 1 GHS = 100 Pesewas) as 64-bit signed integers. Floating-point numbers are prohibited.
+  version: 1.0.0
+  contact:
+    name: Boron Labs Systems & Fintech Engineering
+    url: https://boronlabs.io
+
+servers:
+  - url: http://localhost:8080
+    description: Local Sandbox / Development
+  - url: https://api.m-tap.boronlabs.io
+    description: Production Switching Cluster
+
+paths:
+  /health:
+    get:
+      summary: Liveness Probe
+      description: Returns service uptime status.
+      responses:
+        '200':
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP
+                  time:
+                    type: string
+                    format: date-time
+
+  /ready:
+    get:
+      summary: Readiness Probe
+      description: Validates database (PostgreSQL 16) and cache (Redis) network connectivity.
+      responses:
+        '200':
+          description: All dependencies connected and ready to switch traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: READY
+                  database:
+                    type: string
+                    example: CONNECTED
+                  redis:
+                    type: string
+                    example: CONNECTED
+        '503':
+          description: One or more data stores are degraded.
+
+  /api/v1/terminal/tap:
+    post:
+      summary: Process Proximity NFC Tap
+      description: |
+        Processes a customer NFC tap on an edge POS terminal.
+        
+        **Defense Matrix Requirements:**
+        1. `X-Terminal-Id`: Registered terminal identifier (e.g. `POD_001`).
+        2. `X-Timestamp`: Current Unix epoch seconds. Replayed requests where `|now - timestamp| > 30s` are rejected.
+        3. `X-Signature`: Hex-encoded `HMAC-SHA256(PreSharedKey, timestamp + "." + raw_body)`.
+        4. `X-Idempotency-Key`: Unique UUIDv4 key for distributed locking.
+        5. **Rate Limiting:** Max 1 tap per 3 seconds per terminal.
+      parameters:
+        - name: X-Terminal-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            example: POD_001
+        - name: X-Timestamp
+          in: header
+          required: true
+          schema:
+            type: integer
+            example: 1731182400
+        - name: X-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+            example: 9b2d8f76a5e1c3b4d2a9f8e7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7
+        - name: X-Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: b53f191b-1a98-4a57-b087-8c347f75c2e9
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - terminal_id
+                - tag_uid
+                - amount_pesewas
+              properties:
+                terminal_id:
+                  type: string
+                  example: POD_001
+                tag_uid:
+                  type: string
+                  description: 14-character (7-byte) hexadecimal NFC tag UID.
+                  example: "04A38CF2196880"
+                amount_pesewas:
+                  type: integer
+                  format: int64
+                  description: Minor currency units in Pesewas (2500 = GHS 25.00).
+                  example: 2500
+      responses:
+        '202':
+          description: Tap validated, transaction created as PENDING, and MoMo charge initiated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transaction_id:
+                    type: string
+                    format: uuid
+                  external_reference:
+                    type: string
+                    example: mtap_798ba7ce_1731182400123
+                  status:
+                    type: string
+                    example: PENDING
+                  amount_pesewas:
+                    type: integer
+                    example: 2500
+                  message:
+                    type: string
+                    example: Please authorize the prompt on your phone
+        '401':
+          description: HMAC authentication failed or replay attack detected.
+        '409':
+          description: Concurrent tap in progress with this idempotency key.
+        '422':
+          description: Tag unrecognized, frozen, or spending limit exceeded.
+        '429':
+          description: Terminal rate limit exceeded (1 tap / 3s).
+
+  /api/v1/tags/initiate-pairing:
+    post:
+      summary: Initiate Self-Service Tag Onboarding
+      description: |
+        Generates a 6-digit cryptographic OTP, hashes it in Redis (300s TTL),
+        and dispatches an SMS via Africa's Talking.
+      parameters:
+        - name: X-Forwarded-For
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tag_uid
+                - phone_number
+              properties:
+                tag_uid:
+                  type: string
+                  example: "04A38CF2196881"
+                phone_number:
+                  type: string
+                  description: Ghanaian phone number in E.164 format (233XXXXXXXXX).
+                  example: "233241234567"
+      responses:
+        '200':
+          description: OTP dispatched via SMS.
+        '429':
+          description: SMS rate limit exceeded (1 OTP / 60s per phone, max 5 / hr per IP).
+
+  /api/v1/tags/verify-otp:
+    post:
+      summary: Verify Tag Onboarding OTP
+      description: Validates 6-digit OTP against Redis. On match, transitions tag to ACTIVE and warms cache for 24h.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tag_uid
+                - otp
+              properties:
+                tag_uid:
+                  type: string
+                  example: "04A38CF2196881"
+                otp:
+                  type: string
+                  minLength: 6
+                  maxLength: 6
+                  example: "123456"
+      responses:
+        '200':
+          description: Tag activated successfully.
+        '401':
+          description: Invalid or expired OTP.
+
+  /api/v1/tags/revoke:
+    post:
+      summary: Emergency Tag Revocation (Kill-Switch)
+      description: Permanently sets tag to REVOKED in PostgreSQL and immediately evicts it from Redis cache.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tag_uid
+              properties:
+                tag_uid:
+                  type: string
+                  example: "04A38CF2196881"
+                reason:
+                  type: string
+                  example: "Customer reported lost NFC wristband"
+      responses:
+        '200':
+          description: Tag revoked and cache evicted.
+
+  /api/v1/payments/paystack/webhook:
+    post:
+      summary: Paystack Clearing Rail Webhook
+      description: |
+        Asynchronous webhook listener for clearing Mobile Money collections.
+        Protected by Paystack IP whitelisting and HMAC-SHA512 raw body verification.
+        Enqueues to Asynq `payments` queue within 30ms.
+      parameters:
+        - name: x-paystack-signature
+          in: header
+          required: true
+          schema:
+            type: string
+            description: Hex-encoded HMAC-SHA512(secret_key, raw_body_bytes)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - event
+                - data
+              properties:
+                event:
+                  type: string
+                  example: charge.success
+                data:
+                  type: object
+                  properties:
+                    reference:
+                      type: string
+                      example: mtap_798ba7ce_1731182400123
+                    status:
+                      type: string
+                      example: success
+                    amount:
+                      type: integer
+                      example: 2500
+      responses:
+        '200':
+          description: Webhook acknowledged.
+        '401':
+          description: Invalid x-paystack-signature.
+        '403':
+          description: Sender IP not in Paystack whitelist.
+
