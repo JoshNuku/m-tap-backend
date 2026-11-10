@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/boronlabs/m-tap-backend/internal/config"
 	"github.com/boronlabs/m-tap-backend/internal/middleware"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 func TestSwaggerEndpoints(t *testing.T) {
