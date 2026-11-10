@@ -25,11 +25,60 @@ import (
 )
 
 var (
-	tagHexRegex   = regexp.MustCompile(`^[0-9A-Fa-f]{14}$`)
-	phoneRegex    = regexp.MustCompile(`^233[0-9]{9}$`)
-	ErrInvalidTag = errors.New("tag_uid must be a valid 14-character (7-byte) hexadecimal string")
-	ErrInvalidPhone = errors.New("phone_number must be a Ghanaian mobile number in E.164 format: 233XXXXXXXXX")
+	tagHexRegex = regexp.MustCompile(`^[0-9A-Fa-f]{14}$`)
+	otpRegex    = regexp.MustCompile(`^[0-9]{6}$`)
 )
+
+// NormalizeAndValidateGhanaPhone cleans, normalizes, and validates Ghanaian mobile MSISDNs.
+// Supports +233XXXXXXXXX, 233XXXXXXXXX, and local 0XXXXXXXXX formats.
+func NormalizeAndValidateGhanaPhone(input string) (string, error) {
+	cleaned := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' || r == '+' {
+			return r
+		}
+		return -1
+	}, strings.TrimSpace(input))
+
+	if strings.HasPrefix(cleaned, "+") {
+		cleaned = cleaned[1:]
+	}
+
+	// Convert local 10-digit format (e.g. 0241234567) to international 233241234567
+	if len(cleaned) == 10 && strings.HasPrefix(cleaned, "0") {
+		cleaned = "233" + cleaned[1:]
+	}
+
+	if len(cleaned) != 12 || !strings.HasPrefix(cleaned, "233") {
+		return "", errors.New("phone_number must be a valid Ghanaian mobile number: 233XXXXXXXXX or 0XXXXXXXXX")
+	}
+
+	// Validate known Ghana telco network prefixes (MTN, Telecel/Vodafone, AT)
+	prefix := cleaned[3:5]
+	switch prefix {
+	case "20", "24", "25", "26", "27", "28", "50", "54", "55", "56", "57", "59":
+		return cleaned, nil
+	default:
+		return "", fmt.Errorf("phone prefix 0%s is not a recognized Ghanaian mobile network (MTN, Telecel, AT)", prefix)
+	}
+}
+
+// NormalizeAndValidateTagUID verifies 14-character (7-byte) hexadecimal NFC tag UIDs.
+func NormalizeAndValidateTagUID(input string) (string, error) {
+	tag := strings.ToUpper(strings.TrimSpace(input))
+	if !tagHexRegex.MatchString(tag) {
+		return "", errors.New("tag_uid must be a valid 14-character (7-byte) hexadecimal string (e.g. 04A38CF2196880)")
+	}
+	return tag, nil
+}
+
+// ValidateOTPCode ensures OTP is strictly 6 numeric digits.
+func ValidateOTPCode(input string) (string, error) {
+	otp := strings.TrimSpace(input)
+	if !otpRegex.MatchString(otp) {
+		return "", errors.New("otp must be exactly 6 numeric digits")
+	}
+	return otp, nil
+}
 
 type TagService interface {
 	InitiatePairing(ctx context.Context, tagUID, phoneNumber, clientIP string) error
@@ -60,18 +109,17 @@ type otpState struct {
 }
 
 func (s *tagService) InitiatePairing(ctx context.Context, tagUID, phoneNumber, clientIP string) error {
-	tagUID = strings.ToUpper(strings.TrimSpace(tagUID))
-	phoneNumber = strings.TrimSpace(phoneNumber)
-
-	if !tagHexRegex.MatchString(tagUID) {
-		return ErrInvalidTag
+	normalizedTag, err := NormalizeAndValidateTagUID(tagUID)
+	if err != nil {
+		return err
 	}
-	if !phoneRegex.MatchString(phoneNumber) {
-		return ErrInvalidPhone
+	normalizedPhone, err := NormalizeAndValidateGhanaPhone(phoneNumber)
+	if err != nil {
+		return err
 	}
 
 	// 1. Enforce per-phone SMS rate limit (60s cooldown)
-	if err := middleware.CheckPhoneSMSRateLimit(ctx, s.rdb, phoneNumber); err != nil {
+	if err := middleware.CheckPhoneSMSRateLimit(ctx, s.rdb, normalizedPhone); err != nil {
 		return err
 	}
 
@@ -88,14 +136,14 @@ func (s *tagService) InitiatePairing(ctx context.Context, tagUID, phoneNumber, c
 
 	// 4. Store in Redis otp:{tag_uid} (300s TTL)
 	otpPayload, err := json.Marshal(otpState{
-		PhoneNumber: phoneNumber,
+		PhoneNumber: normalizedPhone,
 		HashedOTP:   hashedOTP,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to serialize OTP state: %w", err)
 	}
 
-	otpKey := fmt.Sprintf("otp:%s", tagUID)
+	otpKey := fmt.Sprintf("otp:%s", normalizedTag)
 	if err := s.rdb.Set(ctx, otpKey, string(otpPayload), 300*time.Second).Err(); err != nil {
 		return fmt.Errorf("failed to persist OTP state in cache: %w", err)
 	}
@@ -115,7 +163,7 @@ func (s *tagService) InitiatePairing(ctx context.Context, tagUID, phoneNumber, c
 		SET phone_number = EXCLUDED.phone_number
 		RETURNING id
 	`
-	if err := tx.QueryRow(ctx, upsertCustomerQuery, phoneNumber).Scan(&customerID); err != nil {
+	if err := tx.QueryRow(ctx, upsertCustomerQuery, normalizedPhone).Scan(&customerID); err != nil {
 		return fmt.Errorf("failed to upsert customer: %w", err)
 	}
 
@@ -127,7 +175,7 @@ func (s *tagService) InitiatePairing(ctx context.Context, tagUID, phoneNumber, c
 		    status = EXCLUDED.status,
 		    updated_at = NOW()
 	`
-	if _, err := tx.Exec(ctx, upsertTagQuery, tagUID, customerID, models.StatusPendingActivation); err != nil {
+	if _, err := tx.Exec(ctx, upsertTagQuery, normalizedTag, customerID, models.StatusPendingActivation); err != nil {
 		return fmt.Errorf("failed to upsert customer tag: %w", err)
 	}
 
@@ -136,7 +184,7 @@ func (s *tagService) InitiatePairing(ctx context.Context, tagUID, phoneNumber, c
 	}
 
 	// 6. Enqueue non-blocking SMS OTP dispatch task onto Asynq notifications queue
-	task, err := tasks.NewSendOTPTask(tagUID, phoneNumber, otpCode)
+	task, err := tasks.NewSendOTPTask(normalizedTag, normalizedPhone, otpCode)
 	if err != nil {
 		slog.Error("Failed to build Asynq OTP task", "error", err)
 	} else if _, err := s.asynqClient.EnqueueContext(ctx, task); err != nil {
@@ -144,24 +192,26 @@ func (s *tagService) InitiatePairing(ctx context.Context, tagUID, phoneNumber, c
 	}
 
 	// 7. Write audit log
-	_ = s.audit.Log(ctx, models.EntityCustomerTag, tagUID, models.ActionTagPairInitiated, models.ActorCustomer, &phoneNumber, map[string]interface{}{
+	_ = s.audit.Log(ctx, models.EntityCustomerTag, normalizedTag, models.ActionTagPairInitiated, models.ActorCustomer, &normalizedPhone, map[string]interface{}{
 		"ip":           clientIP,
-		"phone_number": phoneNumber,
+		"phone_number": normalizedPhone,
 	})
 
 	return nil
 }
 
 func (s *tagService) VerifyOTP(ctx context.Context, tagUID, otpInput string) error {
-	tagUID = strings.ToUpper(strings.TrimSpace(tagUID))
-	otpInput = strings.TrimSpace(otpInput)
-
-	if !tagHexRegex.MatchString(tagUID) {
-		return ErrInvalidTag
+	normalizedTag, err := NormalizeAndValidateTagUID(tagUID)
+	if err != nil {
+		return err
+	}
+	validOTP, err := ValidateOTPCode(otpInput)
+	if err != nil {
+		return err
 	}
 
 	// 1. Validate OTP from Redis
-	otpKey := fmt.Sprintf("otp:%s", tagUID)
+	otpKey := fmt.Sprintf("otp:%s", normalizedTag)
 	val, err := s.rdb.Get(ctx, otpKey).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -176,7 +226,7 @@ func (s *tagService) VerifyOTP(ctx context.Context, tagUID, otpInput string) err
 	}
 
 	// 2. Hash input and verify
-	h := sha256.Sum256([]byte(otpInput))
+	h := sha256.Sum256([]byte(validOTP))
 	inputHash := hex.EncodeToString(h[:])
 
 	if inputHash != state.HashedOTP {
@@ -190,7 +240,7 @@ func (s *tagService) VerifyOTP(ctx context.Context, tagUID, otpInput string) err
 		SET status = $1, activated_at = $2, failed_prompt_count = 0, updated_at = $3
 		WHERE tag_uid = $4
 	`
-	cmdTag, err := s.db.Exec(ctx, query, models.StatusActive, now, now, tagUID)
+	cmdTag, err := s.db.Exec(ctx, query, models.StatusActive, now, now, normalizedTag)
 	if err != nil {
 		return fmt.Errorf("failed to activate customer tag in db: %w", err)
 	}
@@ -199,16 +249,16 @@ func (s *tagService) VerifyOTP(ctx context.Context, tagUID, otpInput string) err
 	}
 
 	// 4. Set Redis tag:active:{tag_uid} -> phone_number (24 Hours TTL)
-	activeKey := fmt.Sprintf("tag:active:%s", tagUID)
+	activeKey := fmt.Sprintf("tag:active:%s", normalizedTag)
 	if err := s.rdb.Set(ctx, activeKey, state.PhoneNumber, 24*time.Hour).Err(); err != nil {
-		slog.Error("Failed to populate active tag cache", "error", err, "tag_uid", tagUID)
+		slog.Error("Failed to populate active tag cache", "error", err, "tag_uid", normalizedTag)
 	}
 
 	// 5. Delete OTP key
 	_ = s.rdb.Del(ctx, otpKey).Err()
 
 	// 6. Write audit log
-	_ = s.audit.Log(ctx, models.EntityCustomerTag, tagUID, models.ActionTagActivated, models.ActorCustomer, &state.PhoneNumber, map[string]interface{}{
+	_ = s.audit.Log(ctx, models.EntityCustomerTag, normalizedTag, models.ActionTagActivated, models.ActorCustomer, &state.PhoneNumber, map[string]interface{}{
 		"phone_number": state.PhoneNumber,
 		"activated_at": now,
 	})
@@ -217,7 +267,10 @@ func (s *tagService) VerifyOTP(ctx context.Context, tagUID, otpInput string) err
 }
 
 func (s *tagService) RevokeTag(ctx context.Context, tagUID, reason, actorType, actorID string) error {
-	tagUID = strings.ToUpper(strings.TrimSpace(tagUID))
+	normalizedTag, err := NormalizeAndValidateTagUID(tagUID)
+	if err != nil {
+		return err
+	}
 
 	// 1. Update status to REVOKED in PostgreSQL
 	query := `
@@ -225,7 +278,7 @@ func (s *tagService) RevokeTag(ctx context.Context, tagUID, reason, actorType, a
 		SET status = $1, updated_at = NOW()
 		WHERE tag_uid = $2
 	`
-	res, err := s.db.Exec(ctx, query, models.StatusRevoked, tagUID)
+	res, err := s.db.Exec(ctx, query, models.StatusRevoked, normalizedTag)
 	if err != nil {
 		return fmt.Errorf("failed to revoke tag in database: %w", err)
 	}
@@ -234,11 +287,11 @@ func (s *tagService) RevokeTag(ctx context.Context, tagUID, reason, actorType, a
 	}
 
 	// 2. Evict cache immediately
-	activeKey := fmt.Sprintf("tag:active:%s", tagUID)
+	activeKey := fmt.Sprintf("tag:active:%s", normalizedTag)
 	_ = s.rdb.Del(ctx, activeKey).Err()
 
 	// 3. Write audit log
-	_ = s.audit.Log(ctx, models.EntityCustomerTag, tagUID, models.ActionTagRevoked, actorType, &actorID, map[string]interface{}{
+	_ = s.audit.Log(ctx, models.EntityCustomerTag, normalizedTag, models.ActionTagRevoked, actorType, &actorID, map[string]interface{}{
 		"reason": reason,
 	})
 
@@ -246,7 +299,10 @@ func (s *tagService) RevokeTag(ctx context.Context, tagUID, reason, actorType, a
 }
 
 func (s *tagService) ResolveActiveTagPhone(ctx context.Context, tagUID string) (string, error) {
-	tagUID = strings.ToUpper(strings.TrimSpace(tagUID))
+	normalizedTag, err := NormalizeAndValidateTagUID(tagUID)
+	if err != nil {
+		return "", err
+	}
 
 	// 1. Read from Redis tag:active:{tag_uid} (sub-2ms cache)
 	activeKey := fmt.Sprintf("tag:active:%s", tagUID)

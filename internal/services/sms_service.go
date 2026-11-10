@@ -35,10 +35,11 @@ func NewAfricaTalkingService(cfg *config.Config) SMSService {
 }
 
 type atRecipientResponse struct {
-	Number    string `json:"number"`
-	Status    string `json:"status"`
-	Cost      string `json:"cost"`
-	MessageID string `json:"messageId"`
+	Number     string `json:"number"`
+	Status     string `json:"status"`
+	Cost       string `json:"cost"`
+	MessageID  string `json:"messageId"`
+	StatusCode int    `json:"statusCode"`
 }
 
 type atMessageResponse struct {
@@ -49,19 +50,25 @@ type atMessageResponse struct {
 }
 
 func (s *africaTalkingService) SendOTP(ctx context.Context, phoneNumber, otpCode string) error {
-	msg := fmt.Sprintf("Your M-Tap activation code is: %s. Valid for 5 minutes. Boron Labs.", otpCode)
+	msg := fmt.Sprintf("Your M-Tap proximity activation code is: %s. Valid for 5 minutes. Boron Labs.", otpCode)
 
-	// If mock mode is enabled, log OTP and return successfully
+	// Always emit structured log so developer/tester has immediate visibility in terminal
+	slog.Info("Proximity activation OTP generated",
+		"phone_number", phoneNumber,
+		"otp", otpCode,
+		"mock_sms", s.cfg.MockSMS,
+	)
+
+	// If mock mode is enabled, skip external HTTP call
 	if s.cfg.MockSMS {
-		slog.Info("[MOCK AFRICA'S TALKING SMS] Dispatching proximity activation OTP",
-			"phone_number", phoneNumber,
+		slog.Info("[MOCK SMS ACTIVATED] Skipping external Africa's Talking dispatch",
+			"recipient", phoneNumber,
 			"otp", otpCode,
-			"msg", msg,
 		)
 		return nil
 	}
 
-	// Normalize E.164 phone number
+	// Format destination with international '+' prefix required by Africa's Talking
 	normalizedPhone := phoneNumber
 	if !strings.HasPrefix(normalizedPhone, "+") {
 		normalizedPhone = "+" + normalizedPhone
@@ -77,9 +84,9 @@ func (s *africaTalkingService) SendOTP(ctx context.Context, phoneNumber, otpCode
 	formData.Set("to", normalizedPhone)
 	formData.Set("message", msg)
 
-	// Sandbox does not permit custom alphanumeric sender IDs
-	if !s.cfg.AfricaTalkingSandbox && s.cfg.AfricaTalkingSenderID != "" {
-		formData.Set("from", s.cfg.AfricaTalkingSenderID)
+	// Only pass 'from' if an alphanumeric sender ID is registered and approved
+	if !s.cfg.AfricaTalkingSandbox && strings.TrimSpace(s.cfg.AfricaTalkingSenderID) != "" {
+		formData.Set("from", strings.TrimSpace(s.cfg.AfricaTalkingSenderID))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(formData.Encode()))
@@ -102,21 +109,44 @@ func (s *africaTalkingService) SendOTP(ctx context.Context, phoneNumber, otpCode
 		return fmt.Errorf("failed to read AT SMS response: %w", err)
 	}
 
+	slog.Info("Africa's Talking API Raw Response",
+		"http_status", resp.StatusCode,
+		"raw_body", string(bodyBytes),
+	)
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("AT SMS request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var atResp atMessageResponse
 	if err := json.Unmarshal(bodyBytes, &atResp); err != nil {
-		slog.Warn("Failed to parse Africa's Talking JSON response, raw body logged", "raw", string(bodyBytes))
+		slog.Warn("Failed to parse Africa's Talking JSON response", "raw", string(bodyBytes))
 		return nil
 	}
 
-	slog.Info("Africa's Talking SMS dispatched successfully",
-		"phone", normalizedPhone,
-		"status", atResp.SMSMessageData.Message,
-	)
+	// Verify recipient delivery status
+	if len(atResp.SMSMessageData.Recipients) == 0 {
+		slog.Warn("Africa's Talking returned zero recipients (check account balance or sender ID)",
+			"message", atResp.SMSMessageData.Message,
+			"raw", string(bodyBytes),
+		)
+		return fmt.Errorf("Africa's Talking SMS not accepted: %s", atResp.SMSMessageData.Message)
+	}
+
+	recipient := atResp.SMSMessageData.Recipients[0]
+	if recipient.Status != "Success" {
+		slog.Warn("Africa's Talking SMS delivery non-success status",
+			"status", recipient.Status,
+			"cost", recipient.Cost,
+			"phone", recipient.Number,
+		)
+	} else {
+		slog.Info("Africa's Talking SMS delivered to telco gateway",
+			"recipient", recipient.Number,
+			"message_id", recipient.MessageID,
+			"cost", recipient.Cost,
+		)
+	}
 
 	return nil
 }
-

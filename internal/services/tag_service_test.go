@@ -7,19 +7,34 @@ import (
 )
 
 func TestTagValidationAndOTPHashing(t *testing.T) {
-	t.Run("Valid Ghanaian E.164 phone numbers", func(t *testing.T) {
-		validPhones := []string{"233241234567", "233549876543", "233201122334"}
-		for _, p := range validPhones {
-			if !phoneRegex.MatchString(p) {
-				t.Errorf("Expected phone %s to match regex", p)
+	t.Run("Valid Ghanaian phone formats normalized", func(t *testing.T) {
+		testCases := []struct {
+			input    string
+			expected string
+		}{
+			{input: "+233241234567", expected: "233241234567"},
+			{input: "0241234567", expected: "233241234567"},
+			{input: "233241234567", expected: "233241234567"},
+			{input: "0549876543", expected: "233549876543"},
+			{input: "0201122334", expected: "233201122334"},
+		}
+
+		for _, tc := range testCases {
+			normalized, err := NormalizeAndValidateGhanaPhone(tc.input)
+			if err != nil {
+				t.Fatalf("Unexpected error for %s: %v", tc.input, err)
+			}
+			if normalized != tc.expected {
+				t.Fatalf("Expected %s, got %s", tc.expected, normalized)
 			}
 		}
 	})
 
 	t.Run("Invalid phone numbers rejected", func(t *testing.T) {
-		invalidPhones := []string{"0241234567", "+233241234567", "2348012345678", "23324123"}
+		invalidPhones := []string{"2348012345678", "0123456789", "23324123", "024123456789", "phone_number"}
 		for _, p := range invalidPhones {
-			if phoneRegex.MatchString(p) {
+			_, err := NormalizeAndValidateGhanaPhone(p)
+			if err == nil {
 				t.Errorf("Expected invalid phone %s to be rejected", p)
 			}
 		}
@@ -28,16 +43,21 @@ func TestTagValidationAndOTPHashing(t *testing.T) {
 	t.Run("Valid 7-byte hexadecimal Tag UID", func(t *testing.T) {
 		validTags := []string{"04A38CF2196880", "04a38cf2196880", "11223344556677"}
 		for _, tag := range validTags {
-			if !tagHexRegex.MatchString(tag) {
-				t.Errorf("Expected tag %s to be valid", tag)
+			cleaned, err := NormalizeAndValidateTagUID(tag)
+			if err != nil {
+				t.Errorf("Expected tag %s to be valid, got err: %v", tag, err)
+			}
+			if len(cleaned) != 14 {
+				t.Errorf("Expected 14 chars, got %d", len(cleaned))
 			}
 		}
 	})
 
 	t.Run("Invalid Tag UIDs rejected", func(t *testing.T) {
-		invalidTags := []string{"04A38CF2", "04A38CF219688000", "04A38CF219688G"}
+		invalidTags := []string{"04A38CF2", "04A38CF219688000", "04A38CF219688G", "invalid_tag"}
 		for _, tag := range invalidTags {
-			if tagHexRegex.MatchString(tag) {
+			_, err := NormalizeAndValidateTagUID(tag)
+			if err == nil {
 				t.Errorf("Expected invalid tag %s to be rejected", tag)
 			}
 		}
@@ -56,4 +76,3 @@ func TestTagValidationAndOTPHashing(t *testing.T) {
 		}
 	})
 }
-
