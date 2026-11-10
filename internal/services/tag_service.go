@@ -305,7 +305,7 @@ func (s *tagService) ResolveActiveTagPhone(ctx context.Context, tagUID string) (
 	}
 
 	// 1. Read from Redis tag:active:{tag_uid} (sub-2ms cache)
-	activeKey := fmt.Sprintf("tag:active:%s", tagUID)
+	activeKey := fmt.Sprintf("tag:active:%s", normalizedTag)
 	cachedPhone, err := s.rdb.Get(ctx, activeKey).Result()
 	if err == nil && cachedPhone != "" {
 		return cachedPhone, nil
@@ -319,7 +319,7 @@ func (s *tagService) ResolveActiveTagPhone(ctx context.Context, tagUID string) (
 		WHERE ct.tag_uid = $1
 	`
 	var phoneNumber, status string
-	err = s.db.QueryRow(ctx, query, tagUID).Scan(&phoneNumber, &status)
+	err = s.db.QueryRow(ctx, query, normalizedTag).Scan(&phoneNumber, &status)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", errors.New("tag is unregistered")
