@@ -60,7 +60,7 @@ func Load() *Config {
 		MockPaystackSuccess:   getEnvAsBool("MOCK_PAYSTACK_SUCCESS", true),
 		AfricaTalkingUsername: getEnv("AFRICASTALKING_USERNAME", "sandbox"),
 		AfricaTalkingAPIKey:   getEnv("AFRICASTALKING_API_KEY", "mock_at_api_key"),
-		AfricaTalkingSenderID: getEnv("AFRICASTALKING_SENDER_ID", "MTAP"),
+		AfricaTalkingSenderID: getEnv("AFRICASTALKING_SENDER_ID", ""),
 		AfricaTalkingSandbox:  getEnvAsBool("AFRICASTALKING_SANDBOX", true),
 		MockSMS:               getEnvAsBool("MOCK_SMS", true),
 	}
