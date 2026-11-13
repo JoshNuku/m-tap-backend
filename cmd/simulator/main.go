@@ -24,7 +24,7 @@ type TapPayload struct {
 }
 
 func main() {
-	baseURL := flag.String("url", "http://localhost:8080", "Base URL of M-Tap switching service")
+	baseURL := flag.String("url", "https://m-tap-backend.onrender.com", "Base URL of M-Tap switching service")
 	terminalID := flag.String("terminal", "POD_001", "Terminal Identifier")
 	psk := flag.String("psk", "secret_hmac_psk_key_boron_labs_2026", "Terminal Pre-Shared Secret")
 	tagUID := flag.String("tag", "04A38CF2196880", "Active 7-byte NFC Tag UID")

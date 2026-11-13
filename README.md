@@ -98,9 +98,12 @@ MOCK_SMS=false
 ## 6. API Walkthrough & Verification
 
 ### Interactive Swagger UI & OpenAPI Specification
-When the server is running, access the interactive dashboard directly in your browser:
-- **Interactive Swagger UI:** [http://localhost:8080/swagger](http://localhost:8080/swagger) (or `/docs`)
-- **Raw OpenAPI 3.0 Spec:** [http://localhost:8080/swagger/openapi.yaml](http://localhost:8080/swagger/openapi.yaml)
+- **Live Render Dashboard:** [https://m-tap-backend.onrender.com/swagger](https://m-tap-backend.onrender.com/swagger) (or `/docs`)
+- **Live OpenAPI 3.0 Spec:** [https://m-tap-backend.onrender.com/swagger/openapi.yaml](https://m-tap-backend.onrender.com/swagger/openapi.yaml)
+- **Liveness & Readiness Probes:**
+  - Health: `https://m-tap-backend.onrender.com/health`
+  - Ready: `https://m-tap-backend.onrender.com/ready`
+- **Local Sandbox (when running locally):** [http://localhost:8080/swagger](http://localhost:8080/swagger)
 
 ---
 
@@ -115,9 +118,9 @@ BODY='{"terminal_id":"POD_001","tag_uid":"04A38CF2196880","amount_pesewas":2500}
 SIGNATURE=$(echo -n "${TIMESTAMP}.${BODY}" | openssl dgst -sha256 -hmac "secret_hmac_psk_key_boron_labs_2026" | awk '{print $2}')
 ```
 
-#### Executing the Tap:
+#### Executing the Tap (Live on Render):
 ```bash
-curl -i -X POST http://localhost:8080/api/v1/terminal/tap \
+curl -i -X POST https://m-tap-backend.onrender.com/api/v1/terminal/tap \
   -H "Content-Type: application/json" \
   -H "X-Terminal-Id: POD_001" \
   -H "X-Timestamp: ${TIMESTAMP}" \
@@ -144,7 +147,7 @@ curl -i -X POST http://localhost:8080/api/v1/terminal/tap \
 #### 1. Initiate Pairing (`POST /api/v1/tags/initiate-pairing`)
 Generates a 6-digit cryptographic OTP, hashes it in Redis (300s TTL), and dispatches via Africa's Talking.
 ```bash
-curl -i -X POST http://localhost:8080/api/v1/tags/initiate-pairing \
+curl -i -X POST https://m-tap-backend.onrender.com/api/v1/tags/initiate-pairing \
   -H "Content-Type: application/json" \
   -d '{
     "tag_uid": "04A38CF2196881",
@@ -164,7 +167,7 @@ curl -i -X POST http://localhost:8080/api/v1/tags/initiate-pairing \
 #### 2. Verify OTP (`POST /api/v1/tags/verify-otp`)
 Validates the OTP, transitions tag to `ACTIVE`, and warms Redis `tag:active:{tag_uid}` for 24h.
 ```bash
-curl -i -X POST http://localhost:8080/api/v1/tags/verify-otp \
+curl -i -X POST https://m-tap-backend.onrender.com/api/v1/tags/verify-otp \
   -H "Content-Type: application/json" \
   -d '{
     "tag_uid": "04A38CF2196881",
@@ -175,7 +178,7 @@ curl -i -X POST http://localhost:8080/api/v1/tags/verify-otp \
 #### 3. Emergency Tag Revocation (`POST /api/v1/tags/revoke`)
 Immediately revokes tag in PostgreSQL, evicts from Redis cache, and writes to audit logs.
 ```bash
-curl -i -X POST http://localhost:8080/api/v1/tags/revoke \
+curl -i -X POST https://m-tap-backend.onrender.com/api/v1/tags/revoke \
   -H "Content-Type: application/json" \
   -d '{
     "tag_uid": "04A38CF2196881",
@@ -192,7 +195,7 @@ Pushes incoming webhook payload to Asynq `payments` queue within 30ms.
 WEBHOOK_BODY='{"event":"charge.success","data":{"reference":"mtap_798ba7ce_1731182400123","status":"success","amount":2500}}'
 SIG=$(echo -n "${WEBHOOK_BODY}" | openssl dgst -sha512 -hmac "sk_test_mock_secret_key" | awk '{print $2}')
 
-curl -i -X POST http://localhost:8080/api/v1/payments/paystack/webhook \
+curl -i -X POST https://m-tap-backend.onrender.com/api/v1/payments/paystack/webhook \
   -H "Content-Type: application/json" \
   -H "x-paystack-signature: ${SIG}" \
   -d "${WEBHOOK_BODY}"

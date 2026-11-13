@@ -14,10 +14,10 @@ info:
     url: https://boronlabs.io
 
 servers:
+  - url: https://m-tap-backend.onrender.com
+    description: Live Render Production Switching Cluster
   - url: http://localhost:8080
     description: Local Sandbox / Development
-  - url: https://api.m-tap.boronlabs.io
-    description: Production Switching Cluster
 
 paths:
   /health:
