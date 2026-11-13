@@ -301,3 +301,4 @@ The following model compares handling **100 micro-transactions of GHS 10.00 each
 
 ### Phase 2: Self-Service Expansion
 - Introduce **Approach 3 (On-Demand Cash Out)** once the merchant balance ledger and SMS notification pipelines have completed full pilot testing.
+
