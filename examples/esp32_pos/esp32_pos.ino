@@ -188,3 +188,4 @@ void loop() {
   Serial.println("\n[Triggering Scheduled Periodic Tap]");
   sendTap("04A38CF2196880", 1500); // 1500 Pesewas = GHS 15.00
 }
+
