@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/boronlabs/m-tap-backend/internal/config"
@@ -79,14 +80,37 @@ func (p *paystackClient) ChargeMobileMoney(ctx context.Context, req ChargeReques
 		}, nil
 	}
 
+	// Format phone to local 10-digit format for Paystack Ghana MoMo (e.g. 054..., 024..., 055...)
+	momoPhone := req.PhoneNumber
+	if strings.HasPrefix(momoPhone, "233") && len(momoPhone) == 12 {
+		momoPhone = "0" + momoPhone[3:]
+	}
+
+	provider := req.Provider
+
+	// In Paystack Test Mode (sk_test_...), Paystack requires specific test numbers:
+	// 0551234987 (MTN), 0551234988 (Vodafone/Telecel), 0551234989 (AT).
+	// If a non-test number is passed with sk_test_, Paystack rejects with HTTP 400.
+	// Auto-route to 0551234987 in test mode so testing works seamlessly.
+	if strings.HasPrefix(p.cfg.PaystackSecretKey, "sk_test_") {
+		if momoPhone != "0551234987" && momoPhone != "0551234988" && momoPhone != "0551234989" {
+			slog.Info("Paystack test mode detected: using Paystack test MoMo number",
+				"original_phone", momoPhone,
+				"test_phone", "0551234987",
+			)
+			momoPhone = "0551234987"
+			provider = "mtn"
+		}
+	}
+
 	payload := map[string]interface{}{
 		"amount":    req.AmountPesewas, // minor units
 		"email":     fmt.Sprintf("%s@m-tap.boronlabs.io", req.PhoneNumber),
 		"currency":  "GHS",
 		"reference": req.Reference,
 		"mobile_money": map[string]string{
-			"phone":    req.PhoneNumber,
-			"provider": req.Provider,
+			"phone":    momoPhone,
+			"provider": provider,
 		},
 	}
 
@@ -133,11 +157,16 @@ func (p *paystackClient) ChargeMobileMoney(ctx context.Context, req ChargeReques
 		return nil, fmt.Errorf("Paystack charge rejected (HTTP %d): %s", resp.StatusCode, rawResp.Message)
 	}
 
+	displayText := rawResp.Data.DisplayText
+	if displayText == "" {
+		displayText = "Please authorize the Mobile Money prompt on your phone"
+	}
+
 	return &ChargeResponse{
 		Status:      rawResp.Status,
 		Message:     rawResp.Message,
 		Reference:   rawResp.Data.Reference,
-		DisplayText: rawResp.Data.DisplayText,
+		DisplayText: displayText,
 	}, nil
 }
 
