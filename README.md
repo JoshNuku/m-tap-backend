@@ -232,3 +232,11 @@ Run the full test suite with race detector:
 go test -v -race ./...
 ```
 
+---
+
+## 8. Merchant Settlement & Payout Architectures
+
+For an in-depth architectural breakdown of how merchants receive their funds, consult the comprehensive settlement guide:
+- **[Merchant Payout & Settlement Architectures](docs/merchant_payout_approaches.md)**: Covers Nightly Batch Aggregation via Paystack Transfers API, Native Split Payments via Subaccounts, and On-Demand Self-Service Cash Out via USSD/POS, along with double-entry ledger tracking, fee economics, and Bank of Ghana (Act 987) compliance.
+
+
