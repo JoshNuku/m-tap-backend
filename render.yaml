@@ -12,6 +12,8 @@ services:
         value: production
       - key: PORT
         value: 10000
+      - key: REPLAY_WINDOW_SEC
+        value: "300"
       - key: DATABASE_URL
         sync: false
       - key: DB_MAX_CONNS

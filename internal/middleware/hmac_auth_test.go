@@ -49,8 +49,8 @@ func TestHMACSignatureAndReplayValidation(t *testing.T) {
 		// Simulate anti-replay check
 		now := time.Now().Unix()
 		diff := now - expiredTs
-		if diff <= ReplayWindowSec {
-			t.Fatalf("Expected diff %d to exceed replay window %d", diff, ReplayWindowSec)
+		if diff <= 30 {
+			t.Fatalf("Expected diff %d to exceed replay window 30", diff)
 		}
 	})
 

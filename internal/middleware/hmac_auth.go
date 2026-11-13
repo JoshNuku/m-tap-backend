@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/boronlabs/m-tap-backend/internal/config"
 	"github.com/boronlabs/m-tap-backend/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -26,11 +27,15 @@ const (
 	HeaderSignature  = "X-Signature"
 
 	ContextTerminalKey = "authenticated_terminal"
-	ReplayWindowSec    = 30
 )
 
 // TerminalHMACAuth validates terminal identity, anti-replay window, and HMAC-SHA256 signature.
-func TerminalHMACAuth(db *pgxpool.Pool) gin.HandlerFunc {
+func TerminalHMACAuth(db *pgxpool.Pool, cfg *config.Config) gin.HandlerFunc {
+	replayWindow := cfg.ReplayWindowSec
+	if replayWindow <= 0 {
+		replayWindow = 30
+	}
+
 	return func(c *gin.Context) {
 		terminalID := c.GetHeader(HeaderTerminalID)
 		timestampStr := c.GetHeader(HeaderTimestamp)
@@ -44,7 +49,7 @@ func TerminalHMACAuth(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// 1. Anti-Replay: Verify |now - timestamp| <= 30s
+		// 1. Anti-Replay: Verify |now - timestamp| <= replayWindow
 		timestampUnix, err := strconv.ParseInt(timestampStr, 10, 64)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
@@ -56,16 +61,17 @@ func TerminalHMACAuth(db *pgxpool.Pool) gin.HandlerFunc {
 
 		nowUnix := time.Now().Unix()
 		diff := math.Abs(float64(nowUnix - timestampUnix))
-		if diff > float64(ReplayWindowSec) {
+		if diff > float64(replayWindow) {
 			slog.Warn("Terminal request rejected: timestamp drift exceeds replay window",
 				"terminal_id", terminalID,
 				"client_ts", timestampUnix,
 				"server_ts", nowUnix,
 				"drift_sec", diff,
+				"allowed_sec", replayWindow,
 			)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error":   "REPLAY_ATTACK_DETECTED",
-				"message": fmt.Sprintf("Timestamp drift %.1fs exceeds maximum allowance of %ds", diff, ReplayWindowSec),
+				"message": fmt.Sprintf("Timestamp drift %.1fs exceeds maximum allowance of %ds (server time: %d)", diff, replayWindow, nowUnix),
 			})
 			return
 		}

@@ -31,6 +31,9 @@ type Config struct {
 	PaystackBypassIPCheck bool
 	MockPaystackSuccess   bool
 
+	// Security & Anti-Replay
+	ReplayWindowSec       int64
+
 	// Africa's Talking SMS Gateway
 	AfricaTalkingUsername string
 	AfricaTalkingAPIKey   string
@@ -58,6 +61,7 @@ func Load() *Config {
 		PaystackBaseURL:       getEnv("PAYSTACK_BASE_URL", "https://api.paystack.co"),
 		PaystackBypassIPCheck: getEnvAsBool("PAYSTACK_BYPASS_IP_CHECK", true), // Default true in dev for convenience
 		MockPaystackSuccess:   getEnvAsBool("MOCK_PAYSTACK_SUCCESS", true),
+		ReplayWindowSec:       int64(getEnvAsInt("REPLAY_WINDOW_SEC", 300)), // Default 300s (5m) to allow Swagger testing and Render cold-starts
 		AfricaTalkingUsername: getEnv("AFRICASTALKING_USERNAME", "sandbox"),
 		AfricaTalkingAPIKey:   getEnv("AFRICASTALKING_API_KEY", "mock_at_api_key"),
 		AfricaTalkingSenderID: getEnv("AFRICASTALKING_SENDER_ID", ""),

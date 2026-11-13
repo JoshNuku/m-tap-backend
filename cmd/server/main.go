@@ -114,7 +114,7 @@ func main() {
 		terminalGroup := v1.Group("/terminal")
 		{
 			terminalGroup.POST("/tap",
-				middleware.TerminalHMACAuth(dbPool),
+				middleware.TerminalHMACAuth(dbPool, cfg),
 				middleware.DistributedIdempotencyMiddleware(rdb),
 				middleware.TerminalRateLimit(rdb),
 				terminalHandler.HandleTap,
