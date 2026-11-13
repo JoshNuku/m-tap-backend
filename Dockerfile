@@ -7,6 +7,8 @@ RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /app
 
+ENV GOTOOLCHAIN=auto
+
 # Cache Go modules
 COPY go.mod go.sum ./
 RUN go mod download
