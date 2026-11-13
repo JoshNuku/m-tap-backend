@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: m-tap-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_MAX_CONNS
+        value: "25"
+      - key: DB_MIN_CONNS
+        value: "2"
+      - key: DB_MAX_CONN_LIFETIME
+        value: 30m
+      - key: DB_MAX_CONN_IDLE_TIME
+        value: 5m
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: PAYSTACK_BASE_URL
+        value: https://api.paystack.co
+      - key: PAYSTACK_BYPASS_IP_CHECK
+        value: "false"
+      - key: MOCK_PAYSTACK_SUCCESS
+        value: "false"
+      - key: AFRICASTALKING_USERNAME
+        sync: false
+      - key: AFRICASTALKING_API_KEY
+        sync: false
+      - key: AFRICASTALKING_SENDER_ID
+        sync: false
+      - key: AFRICASTALKING_SANDBOX
+        value: "false"
+      - key: MOCK_SMS
+        value: "false"
