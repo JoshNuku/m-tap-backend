@@ -1,6 +1,6 @@
 # M-Tap: Proximity Micro-Retail Switching Backend
 **High-Throughput Distributed Switching Engine & Double-Entry Ledger**  
-*Built for Boron Labs by Principal Systems & Fintech Engineering*
+*Built by Boron Labs*
 
 ---
 
