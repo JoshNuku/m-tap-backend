@@ -33,7 +33,7 @@
 | **Distributed Idempotency** | Atomic Redis acquisition `SET lock:idempotency:{key} "PROCESSING" NX EX 15s`. Handles in-flight taps. | `409 Conflict` (`CONCURRENT_TAP_DETECTED`) |
 | **Per-Terminal Rate Limit** | Max 1 tap per 3 seconds per terminal ID (`ratelimit:terminal:{id}`). | `429 Too Many Requests` |
 | **Tag Velocity Defense** | Redis counter `velocity:tag:{tag_uid}` (10m sliding window). If 3 failed attempts occur, tag is auto-frozen in Postgres, Redis cache is evicted, and audit entry recorded. | Tag state transitioned to `FROZEN` |
-| **SMS Onboarding Guard** | Max 1 OTP SMS per 60 seconds per phone number; max 5 OTPs per IP per hour. | `429 Too Many Requests` |
+| **SMS Onboarding Guard** | Max 1 OTP SMS per 15s per phone number (`SMS_PHONE_COOLDOWN_SEC`); max 50 OTPs per IP per hour (`SMS_RATE_LIMIT_MAX_PER_IP`). | `429 Too Many Requests` |
 | **Paystack Webhook Defense** | `x-paystack-signature` verified using HMAC-SHA512 over raw body bytes; IP whitelist (`52.31.139.75`, `52.49.173.169`, `52.214.14.220`). | `401 Unauthorized` / `403 Forbidden` |
 
 ---
@@ -58,8 +58,8 @@ Schema migrations are embedded directly in Go (`embed.FS`) and execute idempoten
 - `lock:idempotency:{key}` $\rightarrow$ String (`PROCESSING`), TTL: 15 seconds.
 - `velocity:tag:{tag_uid}` $\rightarrow$ Integer count, TTL: 600 seconds (10 mins).
 - `ratelimit:terminal:{terminal_id}` $\rightarrow$ String (`1`), TTL: 3 seconds.
-- `ratelimit:sms:phone:{phone_number}` $\rightarrow$ String (`1`), TTL: 60 seconds.
-- `ratelimit:sms:ip:{ip}` $\rightarrow$ Integer counter, TTL: 3600 seconds (1 hour).
+- `ratelimit:sms:phone:{phone_number}` $\rightarrow$ String (`1`), TTL: 15 seconds (configurable via `SMS_PHONE_COOLDOWN_SEC`).
+- `ratelimit:sms:ip:{ip}` $\rightarrow$ Integer counter, TTL: 3600 seconds, threshold: 50 (configurable via `SMS_RATE_LIMIT_MAX_PER_IP`).
 
 ---
 

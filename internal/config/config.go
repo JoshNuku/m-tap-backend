@@ -34,6 +34,12 @@ type Config struct {
 	// Security & Anti-Replay
 	ReplayWindowSec       int64
 
+	// Rate Limiting
+	TerminalRateLimitSec  int
+	SMSRateLimitMaxPerIP  int
+	SMSRateLimitWindow    time.Duration
+	SMSPhoneCooldownSec   int
+
 	// Africa's Talking SMS Gateway
 	AfricaTalkingUsername string
 	AfricaTalkingAPIKey   string
@@ -62,6 +68,10 @@ func Load() *Config {
 		PaystackBypassIPCheck: getEnvAsBool("PAYSTACK_BYPASS_IP_CHECK", true), // Default true in dev for convenience
 		MockPaystackSuccess:   getEnvAsBool("MOCK_PAYSTACK_SUCCESS", true),
 		ReplayWindowSec:       int64(getEnvAsInt("REPLAY_WINDOW_SEC", 300)), // Default 300s (5m) to allow Swagger testing and Render cold-starts
+		TerminalRateLimitSec:  getEnvAsInt("TERMINAL_RATE_LIMIT_SEC", 3),
+		SMSRateLimitMaxPerIP:  getEnvAsInt("SMS_RATE_LIMIT_MAX_PER_IP", 50), // Increased from 5 to 50 requests/hr
+		SMSRateLimitWindow:    getEnvAsDuration("SMS_RATE_LIMIT_WINDOW", 1*time.Hour),
+		SMSPhoneCooldownSec:   getEnvAsInt("SMS_PHONE_COOLDOWN_SEC", 15),     // Decreased from 60s to 15s cooldown
 		AfricaTalkingUsername: getEnv("AFRICASTALKING_USERNAME", "sandbox"),
 		AfricaTalkingAPIKey:   getEnv("AFRICASTALKING_API_KEY", "mock_at_api_key"),
 		AfricaTalkingSenderID: getEnv("AFRICASTALKING_SENDER_ID", ""),

@@ -10,11 +10,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/boronlabs/m-tap-backend/internal/config"
 	"github.com/boronlabs/m-tap-backend/internal/models"
 )
 
-// TerminalRateLimit enforces max 1 tap per 3 seconds per terminal_id.
-func TerminalRateLimit(rdb *redis.Client) gin.HandlerFunc {
+// TerminalRateLimit enforces max 1 tap per N seconds per terminal_id.
+func TerminalRateLimit(rdb *redis.Client, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		terminalID := c.GetHeader(HeaderTerminalID)
 		if terminalID == "" {
@@ -22,9 +23,17 @@ func TerminalRateLimit(rdb *redis.Client) gin.HandlerFunc {
 			return
 		}
 
+		cooldown := 3 * time.Second
+		if cfg != nil && cfg.TerminalRateLimitSec > 0 {
+			cooldown = time.Duration(cfg.TerminalRateLimitSec) * time.Second
+		} else if cfg != nil && cfg.TerminalRateLimitSec == 0 {
+			c.Next()
+			return
+		}
+
 		key := fmt.Sprintf("ratelimit:terminal:%s", terminalID)
-		// Atomic SET NX EX 3s
-		allowed, err := rdb.SetNX(c.Request.Context(), key, "1", 3*time.Second).Result()
+		// Atomic SET NX EX cooldown
+		allowed, err := rdb.SetNX(c.Request.Context(), key, "1", cooldown).Result()
 		if err != nil {
 			slog.Error("Terminal rate limit check error", "error", err)
 			c.Next()
@@ -34,7 +43,7 @@ func TerminalRateLimit(rdb *redis.Client) gin.HandlerFunc {
 		if !allowed {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error":   "TERMINAL_RATE_LIMIT_EXCEEDED",
-				"message": "Maximum 1 tap per 3 seconds allowed per terminal.",
+				"message": fmt.Sprintf("Maximum 1 tap per %v allowed per terminal.", cooldown),
 			})
 			return
 		}
@@ -43,22 +52,33 @@ func TerminalRateLimit(rdb *redis.Client) gin.HandlerFunc {
 	}
 }
 
-// SMSRateLimit enforces max 1 OTP SMS per 60s per phone number and max 5 OTPs per IP per hour.
-func SMSRateLimit(rdb *redis.Client) gin.HandlerFunc {
+// SMSRateLimit enforces max OTP SMS per IP window.
+func SMSRateLimit(rdb *redis.Client, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		clientIP := c.ClientIP()
 
-		// 1. Check IP rate limit (max 5 per 3600s)
+		maxAttempts := int64(50)
+		window := 1 * time.Hour
+		if cfg != nil {
+			if cfg.SMSRateLimitMaxPerIP > 0 {
+				maxAttempts = int64(cfg.SMSRateLimitMaxPerIP)
+			}
+			if cfg.SMSRateLimitWindow > 0 {
+				window = cfg.SMSRateLimitWindow
+			}
+		}
+
+		// 1. Check IP rate limit
 		ipKey := fmt.Sprintf("ratelimit:sms:ip:%s", clientIP)
 		ipAttempts, err := rdb.Incr(c.Request.Context(), ipKey).Result()
 		if err == nil {
 			if ipAttempts == 1 {
-				_ = rdb.Expire(c.Request.Context(), ipKey, 1*time.Hour).Err()
+				_ = rdb.Expire(c.Request.Context(), ipKey, window).Err()
 			}
-			if ipAttempts > 5 {
+			if ipAttempts > maxAttempts {
 				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 					"error":   "IP_RATE_LIMIT_EXCEEDED",
-					"message": "Too many OTP requests from this IP address. Please try again in an hour.",
+					"message": fmt.Sprintf("Too many OTP requests from this IP address (limit: %d/hr). Please try again later.", maxAttempts),
 				})
 				return
 			}
@@ -68,15 +88,18 @@ func SMSRateLimit(rdb *redis.Client) gin.HandlerFunc {
 	}
 }
 
-// CheckPhoneSMSRateLimit checks the 60-second limit for a specific phone number.
-func CheckPhoneSMSRateLimit(ctx context.Context, rdb *redis.Client, phoneNumber string) error {
+// CheckPhoneSMSRateLimit checks the cooldown limit for a specific phone number.
+func CheckPhoneSMSRateLimit(ctx context.Context, rdb *redis.Client, phoneNumber string, cooldownSec int) error {
+	if cooldownSec <= 0 {
+		cooldownSec = 15 // Default 15s cooldown
+	}
 	phoneKey := fmt.Sprintf("ratelimit:sms:phone:%s", phoneNumber)
-	allowed, err := rdb.SetNX(ctx, phoneKey, "1", 60*time.Second).Result()
+	allowed, err := rdb.SetNX(ctx, phoneKey, "1", time.Duration(cooldownSec)*time.Second).Result()
 	if err != nil {
 		return fmt.Errorf("failed to check phone rate limit: %w", err)
 	}
 	if !allowed {
-		return fmt.Errorf("please wait 60 seconds before requesting another activation code")
+		return fmt.Errorf("please wait %d seconds before requesting another activation code", cooldownSec)
 	}
 	return nil
 }

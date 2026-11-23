@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/boronlabs/m-tap-backend/internal/config"
 	"github.com/boronlabs/m-tap-backend/internal/middleware"
 	"github.com/boronlabs/m-tap-backend/internal/models"
 	"github.com/boronlabs/m-tap-backend/internal/tasks"
@@ -92,14 +93,16 @@ type tagService struct {
 	rdb         *redis.Client
 	asynqClient *asynq.Client
 	audit       AuditService
+	cfg         *config.Config
 }
 
-func NewTagService(db *pgxpool.Pool, rdb *redis.Client, asynqClient *asynq.Client, audit AuditService) TagService {
+func NewTagService(db *pgxpool.Pool, rdb *redis.Client, asynqClient *asynq.Client, audit AuditService, cfg *config.Config) TagService {
 	return &tagService{
 		db:          db,
 		rdb:         rdb,
 		asynqClient: asynqClient,
 		audit:       audit,
+		cfg:         cfg,
 	}
 }
 
@@ -118,8 +121,12 @@ func (s *tagService) InitiatePairing(ctx context.Context, tagUID, phoneNumber, c
 		return err
 	}
 
-	// 1. Enforce per-phone SMS rate limit (60s cooldown)
-	if err := middleware.CheckPhoneSMSRateLimit(ctx, s.rdb, normalizedPhone); err != nil {
+	// 1. Enforce per-phone SMS rate limit
+	cooldown := 15
+	if s.cfg != nil && s.cfg.SMSPhoneCooldownSec > 0 {
+		cooldown = s.cfg.SMSPhoneCooldownSec
+	}
+	if err := middleware.CheckPhoneSMSRateLimit(ctx, s.rdb, normalizedPhone, cooldown); err != nil {
 		return err
 	}
 

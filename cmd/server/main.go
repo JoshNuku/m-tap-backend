@@ -70,7 +70,8 @@ func main() {
 	// 6. Core Domain Services
 	auditService := services.NewAuditService(dbPool)
 	smsService := services.NewAfricaTalkingService(cfg)
-	tagService := services.NewTagService(dbPool, rdb, asynqClient, auditService)
+	tagService := services.NewTagService(dbPool, rdb, asynqClient, auditService, cfg)
+
 	paystackClient := services.NewPaystackClient(cfg)
 	paymentService := services.NewPaymentService(cfg, dbPool, rdb, tagService, paystackClient, auditService, asynqClient)
 
@@ -116,7 +117,7 @@ func main() {
 			terminalGroup.POST("/tap",
 				middleware.TerminalHMACAuth(dbPool, cfg),
 				middleware.DistributedIdempotencyMiddleware(rdb),
-				middleware.TerminalRateLimit(rdb),
+				middleware.TerminalRateLimit(rdb, cfg),
 				terminalHandler.HandleTap,
 			)
 		}
@@ -124,7 +125,7 @@ func main() {
 		// B. Self-Service Tag Onboarding
 		tagGroup := v1.Group("/tags")
 		{
-			tagGroup.POST("/initiate-pairing", middleware.SMSRateLimit(rdb), tagHandler.InitiatePairing)
+			tagGroup.POST("/initiate-pairing", middleware.SMSRateLimit(rdb, cfg), tagHandler.InitiatePairing)
 			tagGroup.POST("/verify-otp", tagHandler.VerifyOTP)
 			tagGroup.POST("/revoke", tagHandler.Revoke)
 		}
