@@ -56,7 +56,7 @@ func NormalizeAndValidateGhanaPhone(input string) (string, error) {
 	// Validate known Ghana telco network prefixes (MTN, Telecel/Vodafone, AT)
 	prefix := cleaned[3:5]
 	switch prefix {
-	case "20", "24", "25", "26", "27", "28", "50", "54", "55", "56", "57", "59":
+	case "20", "24", "25", "26", "27", "28", "50", "53", "54", "55", "56", "57", "59":
 		return cleaned, nil
 	default:
 		return "", fmt.Errorf("phone prefix 0%s is not a recognized Ghanaian mobile network (MTN, Telecel, AT)", prefix)

@@ -16,6 +16,7 @@ func TestTagValidationAndOTPHashing(t *testing.T) {
 			{input: "0241234567", expected: "233241234567"},
 			{input: "233241234567", expected: "233241234567"},
 			{input: "0549876543", expected: "233549876543"},
+			{input: "0531234567", expected: "233531234567"},
 			{input: "0201122334", expected: "233201122334"},
 		}
 

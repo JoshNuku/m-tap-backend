@@ -49,12 +49,12 @@ func NewPaystackClient(cfg *config.Config) PaystackClient {
 
 // GhanaTelcoProvider resolves the telco provider code from Ghanaian MSISDN prefix.
 func GhanaTelcoProvider(phoneNumber string) string {
-	// Simple prefix mapper: 23324, 23354, 23355, 23359 -> mtn; 23320, 23350 -> vod; 23327, 23357, 23326 -> tgo
+	// Simple prefix mapper: 23324, 23354, 23355, 23359, 23325, 23353 -> mtn; 23320, 23350 -> vod; 23327, 23357, 23326 -> tgo
 	clean := phoneNumber
 	if len(clean) >= 5 {
 		prefix := clean[:5]
 		switch prefix {
-		case "23324", "23354", "23355", "23359", "23325":
+		case "23324", "23354", "23355", "23359", "23325", "23353":
 			return "mtn"
 		case "23320", "23350":
 			return "vod"
