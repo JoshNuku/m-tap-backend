@@ -17,6 +17,7 @@ import (
 // PaystackClient defines clearing operations for Mobile Money charge prompts.
 type PaystackClient interface {
 	ChargeMobileMoney(ctx context.Context, req ChargeRequest) (*ChargeResponse, error)
+	SubmitOTP(ctx context.Context, reference, otp string) (*ChargeResponse, error)
 }
 
 type ChargeRequest struct {
@@ -27,10 +28,11 @@ type ChargeRequest struct {
 }
 
 type ChargeResponse struct {
-	Status      bool   `json:"status"`
-	Message     string `json:"message"`
-	Reference   string `json:"reference"`
-	DisplayText string `json:"display_text"`
+	Status         bool   `json:"status"`
+	Message        string `json:"message"`
+	Reference      string `json:"reference"`
+	PaystackStatus string `json:"paystack_status"`
+	DisplayText    string `json:"display_text"`
 }
 
 type paystackClient struct {
@@ -114,12 +116,38 @@ func (p *paystackClient) ChargeMobileMoney(ctx context.Context, req ChargeReques
 		},
 	}
 
-	jsonBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal Paystack charge request: %w", err)
+	return p.postPaystack(ctx, "/charge", payload)
+}
+
+func (p *paystackClient) SubmitOTP(ctx context.Context, reference, otp string) (*ChargeResponse, error) {
+	if p.cfg.MockPaystackSuccess {
+		slog.Info("[MOCK PAYSTACK] Mobile Money OTP submitted",
+			"reference", reference,
+		)
+		return &ChargeResponse{
+			Status:         true,
+			Message:        "OTP submitted (Mock Mode)",
+			Reference:      reference,
+			PaystackStatus: "pay_offline",
+			DisplayText:    "Please authorize the prompt on your phone (Mock)",
+		}, nil
 	}
 
-	url := fmt.Sprintf("%s/charge", p.cfg.PaystackBaseURL)
+	payload := map[string]interface{}{
+		"otp":       otp,
+		"reference": reference,
+	}
+	return p.postPaystack(ctx, "/charge/submit_otp", payload)
+}
+
+// postPaystack sends an authenticated POST request to Paystack and normalizes the charge response.
+func (p *paystackClient) postPaystack(ctx context.Context, path string, payload map[string]interface{}) (*ChargeResponse, error) {
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Paystack request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s%s", p.cfg.PaystackBaseURL, path)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Paystack HTTP request: %w", err)
@@ -130,7 +158,7 @@ func (p *paystackClient) ChargeMobileMoney(ctx context.Context, req ChargeReques
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute Paystack charge request: %w", err)
+		return nil, fmt.Errorf("failed to execute Paystack request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -154,7 +182,7 @@ func (p *paystackClient) ChargeMobileMoney(ctx context.Context, req ChargeReques
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !rawResp.Status {
-		return nil, fmt.Errorf("Paystack charge rejected (HTTP %d): %s", resp.StatusCode, rawResp.Message)
+		return nil, fmt.Errorf("Paystack request rejected (HTTP %d): %s", resp.StatusCode, rawResp.Message)
 	}
 
 	displayText := rawResp.Data.DisplayText
@@ -163,10 +191,11 @@ func (p *paystackClient) ChargeMobileMoney(ctx context.Context, req ChargeReques
 	}
 
 	return &ChargeResponse{
-		Status:      rawResp.Status,
-		Message:     rawResp.Message,
-		Reference:   rawResp.Data.Reference,
-		DisplayText: displayText,
+		Status:         rawResp.Status,
+		Message:        rawResp.Message,
+		Reference:      rawResp.Data.Reference,
+		PaystackStatus: rawResp.Data.Status,
+		DisplayText:    displayText,
 	}, nil
 }
 

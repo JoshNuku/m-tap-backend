@@ -76,7 +76,7 @@ func main() {
 	paymentService := services.NewPaymentService(cfg, dbPool, rdb, tagService, paystackClient, auditService, asynqClient)
 
 	// 7. Asynq Background Worker Engine
-	paymentProcessor := worker.NewPaymentWebhookProcessor(dbPool, rdb, auditService)
+	paymentProcessor := worker.NewPaymentWebhookProcessor(cfg, dbPool, rdb, auditService)
 	smsProcessor := worker.NewSMSProcessor(smsService)
 	asynqServer, asynqMux := worker.NewWorkerServer(cfg, paymentProcessor, smsProcessor)
 
@@ -119,6 +119,10 @@ func main() {
 				middleware.DistributedIdempotencyMiddleware(rdb),
 				middleware.TerminalRateLimit(rdb, cfg),
 				terminalHandler.HandleTap,
+			)
+			terminalGroup.POST("/submit-otp",
+				middleware.TerminalHMACAuth(dbPool, cfg),
+				terminalHandler.HandleSubmitOTP,
 			)
 		}
 
