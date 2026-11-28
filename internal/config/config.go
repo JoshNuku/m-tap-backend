@@ -39,6 +39,7 @@ type Config struct {
 	SMSRateLimitMaxPerIP  int
 	SMSRateLimitWindow    time.Duration
 	SMSPhoneCooldownSec   int
+	TagVelocityLimit      int
 
 	// Africa's Talking SMS Gateway
 	AfricaTalkingUsername string
@@ -72,6 +73,7 @@ func Load() *Config {
 		SMSRateLimitMaxPerIP:  getEnvAsInt("SMS_RATE_LIMIT_MAX_PER_IP", 50), // Increased from 5 to 50 requests/hr
 		SMSRateLimitWindow:    getEnvAsDuration("SMS_RATE_LIMIT_WINDOW", 1*time.Hour),
 		SMSPhoneCooldownSec:   getEnvAsInt("SMS_PHONE_COOLDOWN_SEC", 15),     // Decreased from 60s to 15s cooldown
+		TagVelocityLimit:      getEnvAsInt("TAG_VELOCITY_LIMIT", 3),          // Failed taps in 10m before auto-freeze
 		AfricaTalkingUsername: getEnv("AFRICASTALKING_USERNAME", "sandbox"),
 		AfricaTalkingAPIKey:   getEnv("AFRICASTALKING_API_KEY", "mock_at_api_key"),
 		AfricaTalkingSenderID: getEnv("AFRICASTALKING_SENDER_ID", ""),

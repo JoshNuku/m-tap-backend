@@ -87,9 +87,51 @@ func (h *TerminalHandler) HandleTap(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{
 		"transaction_id":     result.TransactionID,
 		"external_reference": result.ExternalReference,
-		"status":            result.Status,
+		"status":             result.Status,
+		"next_action":        result.NextAction,
 		"amount_pesewas":     result.AmountPesewas,
-		"message":           result.Message,
+		"message":            result.Message,
 	})
+}
+
+type SubmitOTPRequest struct {
+	Reference string `json:"reference" binding:"required"`
+	OTP       string `json:"otp" binding:"required"`
+}
+
+// HandleSubmitOTP forwards a Paystack MoMo OTP (e.g. first-time MTN charge) to complete authorization.
+func (h *TerminalHandler) HandleSubmitOTP(c *gin.Context) {
+	terminalVal, exists := c.Get(middleware.ContextTerminalKey)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "UNAUTHENTICATED_TERMINAL"})
+		return
+	}
+	terminal := terminalVal.(models.Terminal)
+
+	var req SubmitOTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "INVALID_REQUEST_BODY",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	result, err := h.paymentService.SubmitTapOTP(
+		c.Request.Context(),
+		terminal.ID,
+		terminal.TerminalIdentifier,
+		req.Reference,
+		req.OTP,
+	)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":   "OTP_SUBMISSION_FAILED",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 

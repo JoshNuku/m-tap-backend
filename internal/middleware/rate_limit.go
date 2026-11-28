@@ -105,8 +105,12 @@ func CheckPhoneSMSRateLimit(ctx context.Context, rdb *redis.Client, phoneNumber 
 }
 
 // TrackTagVelocity records consecutive failed/unconfirmed attempts.
-// If threshold (3 failed taps in 10 minutes) is breached, automatically freezes the tag.
-func TrackTagVelocity(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, tagUID string, actorID string) (bool, error) {
+// If threshold (maxFailures failed taps in 10 minutes) is breached, automatically freezes the tag.
+func TrackTagVelocity(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, tagUID string, actorID string, maxFailures int) (bool, error) {
+	if maxFailures <= 0 {
+		maxFailures = 3
+	}
+
 	key := fmt.Sprintf("velocity:tag:%s", tagUID)
 	count, err := rdb.Incr(ctx, key).Result()
 	if err != nil {
@@ -117,7 +121,7 @@ func TrackTagVelocity(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, 
 		_ = rdb.Expire(ctx, key, 600*time.Second).Err() // 10 minutes sliding window
 	}
 
-	if count >= 3 {
+	if count >= int64(maxFailures) {
 		slog.Warn("SECURITY ALERT: Tag velocity limit breached. Auto-freezing tag.",
 			"tag_uid", tagUID,
 			"failed_attempts", count,

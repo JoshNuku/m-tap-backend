@@ -20,12 +20,14 @@ import (
 
 type PaymentService interface {
 	ProcessTap(ctx context.Context, terminalID uuid.UUID, terminalIdentifier string, tagUID string, amountPesewas int64) (*TapResult, error)
+	SubmitTapOTP(ctx context.Context, terminalID uuid.UUID, terminalIdentifier, reference, otp string) (*TapResult, error)
 }
 
 type TapResult struct {
 	TransactionID     uuid.UUID `json:"transaction_id"`
 	ExternalReference string    `json:"external_reference"`
 	Status            string    `json:"status"`
+	NextAction        string    `json:"next_action,omitempty"`
 	AmountPesewas     int64     `json:"amount_pesewas"`
 	Message           string    `json:"message"`
 }
@@ -75,7 +77,7 @@ func (s *paymentService) ProcessTap(
 	phoneNumber, err := s.tagService.ResolveActiveTagPhone(ctx, tagUID)
 	if err != nil {
 		// Record failed tap velocity against tag
-		frozen, vErr := middleware.TrackTagVelocity(ctx, s.rdb, s.db, tagUID, terminalIdentifier)
+		frozen, vErr := middleware.TrackTagVelocity(ctx, s.rdb, s.db, tagUID, terminalIdentifier, s.cfg.TagVelocityLimit)
 		if vErr == nil && frozen {
 			return nil, fmt.Errorf("tag velocity limit breached: tag %s has been frozen", tagUID)
 		}
@@ -176,8 +178,60 @@ func (s *paymentService) ProcessTap(
 		TransactionID:     txnID,
 		ExternalReference: externalRef,
 		Status:            models.SettlementPending,
+		NextAction:        chargeResp.PaystackStatus,
 		AmountPesewas:     amountPesewas,
 		Message:           chargeResp.DisplayText,
+	}, nil
+}
+
+func (s *paymentService) SubmitTapOTP(
+	ctx context.Context,
+	terminalID uuid.UUID,
+	terminalIdentifier string,
+	reference string,
+	otp string,
+) (*TapResult, error) {
+	if reference == "" {
+		return nil, errors.New("reference is required")
+	}
+	validOTP, err := ValidateOTPCode(otp)
+	if err != nil {
+		return nil, err
+	}
+
+	var txnID uuid.UUID
+	var amountPesewas int64
+	var state string
+	query := `
+		SELECT id, amount_pesewas, settlement_state
+		FROM transactions
+		WHERE external_reference = $1 AND terminal_id = $2
+	`
+	if err := s.db.QueryRow(ctx, query, reference, terminalID).Scan(&txnID, &amountPesewas, &state); err != nil {
+		return nil, fmt.Errorf("transaction not found for this terminal: %w", err)
+	}
+	if state != models.SettlementPending {
+		return nil, fmt.Errorf("transaction is already '%s' and cannot accept OTP", state)
+	}
+
+	resp, err := s.paystack.SubmitOTP(ctx, reference, validOTP)
+	if err != nil {
+		return nil, fmt.Errorf("payment rail OTP submission failed: %w", err)
+	}
+
+	_ = s.audit.Log(ctx, models.EntityTransaction, txnID.String(), models.ActionPaymentInitiated, models.ActorTerminal, &terminalIdentifier, map[string]interface{}{
+		"external_reference": reference,
+		"paystack_status":    resp.PaystackStatus,
+		"step":               "submit_otp",
+	})
+
+	return &TapResult{
+		TransactionID:     txnID,
+		ExternalReference: reference,
+		Status:            state,
+		NextAction:        resp.PaystackStatus,
+		AmountPesewas:     amountPesewas,
+		Message:           resp.DisplayText,
 	}, nil
 }
 

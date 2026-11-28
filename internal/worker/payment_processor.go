@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/boronlabs/m-tap-backend/internal/config"
 	"github.com/boronlabs/m-tap-backend/internal/middleware"
 	"github.com/boronlabs/m-tap-backend/internal/models"
 	"github.com/boronlabs/m-tap-backend/internal/services"
@@ -20,13 +21,15 @@ import (
 )
 
 type PaymentWebhookProcessor struct {
+	cfg   *config.Config
 	db    *pgxpool.Pool
 	rdb   *redis.Client
 	audit services.AuditService
 }
 
-func NewPaymentWebhookProcessor(db *pgxpool.Pool, rdb *redis.Client, audit services.AuditService) *PaymentWebhookProcessor {
+func NewPaymentWebhookProcessor(cfg *config.Config, db *pgxpool.Pool, rdb *redis.Client, audit services.AuditService) *PaymentWebhookProcessor {
 	return &PaymentWebhookProcessor{
+		cfg:   cfg,
 		db:    db,
 		rdb:   rdb,
 		audit: audit,
@@ -154,7 +157,7 @@ func (p *PaymentWebhookProcessor) ProcessTask(ctx context.Context, t *asynq.Task
 		}
 
 		// Track failed tap velocity
-		_, _ = middleware.TrackTagVelocity(ctx, p.rdb, p.db, tagUID, "PAYSTACK_WEBHOOK")
+		_, _ = middleware.TrackTagVelocity(ctx, p.rdb, p.db, tagUID, "PAYSTACK_WEBHOOK", p.cfg.TagVelocityLimit)
 
 		_ = p.audit.Log(ctx, models.EntityTransaction, txnID.String(), models.ActionPaymentDeclined, models.ActorSystemRule, nil, map[string]interface{}{
 			"external_reference": data.Reference,
